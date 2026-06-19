@@ -36,56 +36,117 @@ If 1000 users race to claim the last item — **exactly 1 wins**. No locks. No q
 ---
 
 ## 🏗 Architecture
+╔══════════════════════════════════════════════════════════════╗
 
-┌─────────────────────────────────────────────┐
+║                        DROPRUSH                              ║
 
-│           Shoppers (multi-tab)              │
+║                  Flash Sale Platform                         ║
 
-└──────────────────┬──────────────────────────┘
+╚══════════════════════════════════════════════════════════════╝
+                ┌─────────────────┐
+                │   🛍 SHOPPERS   │
+                │  (multi-tab)    │
+                └────────┬────────┘
+                         │ HTTP
+                ┌────────▼────────┐
+                │   👤 ADMIN      │
+                │  (brand panel)  │
+                └────────┬────────┘
+                         │
+      ╔══════════════════▼═══════════════════╗
+      ║         VERCEL EDGE NETWORK          ║
+      ║                                      ║
+      ║  ┌─────────────────────────────────┐ ║
+      ║  │    Next.js 15 — App Router      │ ║
+      ║  │                                 │ ║
+      ║  │  /              → Drop feed     │ ║
+      ║  │  /drops/[id]    → Detail page   │ ║
+      ║  │  /admin         → Dashboard     │ ║
+      ║  └─────────────────────────────────┘ ║
+      ║                                      ║
+      ║  ┌─────────────────────────────────┐ ║
+      ║  │       API Routes                │ ║
+      ║  │                                 │ ║
+      ║  │  GET  /api/drops         → List │ ║
+      ║  │  GET  /api/drops/[id]    → Get  │ ║
+      ║  │  POST /api/drops/[id]/claim      │ ║
+      ║  │  POST /api/admin/drops   → Create│ ║
+      ║  └─────────────────────────────────┘ ║
+      ╚══════════════════╦═══════════════════╝
+                         ║
+                         ║ AWS SDK v3
+                         ║
+      ╔══════════════════▼═══════════════════╗
+      ║         AWS DYNAMODB                 ║
+      ║         Single-Table Design          ║
+      ║                                      ║
+      ║  ┌─────────────────────────────────┐ ║
+      ║  │  TABLE: DropRush                │ ║
+      ║  │                                 │ ║
+      ║  │  PK=DROP#id  SK=META            │ ║
+      ║  │  → name, brand, price           │ ║
+      ║  │  → totalStock                   │ ║
+      ║  │  → remainingStock ◄─────────┐   │ ║
+      ║  │                             │   │ ║
+      ║  │  PK=DROP#id  SK=CLAIM#uid   │   │ ║
+      ║  │  → claimedAt, status        │   │ ║
+      ║  └─────────────────────────────┘   │ ║
+      ║                                    │ ║
+      ║  ┌─────────────────────────────┐   │ ║
+      ║  │  GSI1 (Live Drop Feed)      │   │ ║
+      ║  │  GSI1PK = STATUS#active     │   │ ║
+      ║  │  GSI1SK = startTime#dropId  │   │ ║
+      ║  └─────────────────────────────┘   │ ║
+      ║                                    │ ║
+      ║  ⚡ ATOMIC CLAIM OPERATION ────────┘ ║
+      ║                                      ║
+      ║  UpdateItem(                         ║
+      ║    Key: { PK: DROP#id, SK: META }    ║
+      ║    UpdateExpression:                 ║
+      ║      SET remainingStock = remainingStock - 1
+      ║    ConditionExpression:              ║
+      ║      remainingStock > 0              ║
+      ║  )                                   ║
+      ║                                      ║
+      ║  ✅ Success → CLAIMED                ║
+      ║  ❌ Fail    → SOLD OUT               ║
+      ╚══════════════════════════════════════╝
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CLAIM FLOW (Race Condition Proof)
+User A ──┐
+
+User B ──┤──► DynamoDB Conditional Write
+
+User C ──┤         │
+
+User D ──┘         ▼
+
+┌────────────┐
+
+│ stock = 1  │
+
+└─────┬──────┘
 
 │
 
-┌──────────────────▼──────────────────────────┐
+┌───────────┴───────────┐
 
-│      Next.js Frontend — Vercel / v0.app     │
+│                       │
 
-│   Drop feed · Countdown · Claim button      │
+User A wins            Users B,C,D
 
-└──────────────────┬──────────────────────────┘
+remainingStock=0       ConditionalCheck
 
-│
-
-┌──────────────────▼──────────────────────────┐
-
-│         API Routes / Server Actions         │
-
-│      /claim · /drops · /admin/drops         │
-
-└──────────────────┬──────────────────────────┘
+CLAIM record written   Failed → SOLD OUT
 
 │
 
-┌──────────────────▼──────────────────────────┐
+▼
 
-│          AWS DynamoDB — Single Table        │
+Zero oversells.
 
-│                                             │
-
-│  PK=DROP#id    SK=META      → Drop data    │
-
-│  PK=DROP#id    SK=CLAIM#uid → Claim record │
-
-│                                             │
-
-│  GSI1: STATUS#active → sorted by startTime │
-
-│                                             │
-
-│  ⚡ UpdateItem + ConditionExpression        │
-
-│     guarantees atomic stock decrement       │
-
-└─────────────────────────────────────────────┘
+Guaranteed.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ---
 
@@ -169,7 +230,7 @@ DROPRUSH_TABLE_NAME=DropRush
 
 <div align="center">
 
-Built with ⚡ for the **H0: Hack the Zero Stack with Vercel v0 and AWS Databases** — [Hackathon]](https://h01.devpost.com/?ref_content=featured&ref_feature=challenge&ref_medium=portfolio&_gl=1*1rkifi5*_gcl_au*MTM2NjE0NzQ2OS4xNzgwOTIxOTAx*_ga*MTU4NzI3MzA4OC4xNzgwOTIxOTAx*_ga_0YHJK3Y10M*czE3ODE3ODc3MzIkbzI5JGcxJHQxNzgxNzg3NzU4JGozNCRsMCRoMA..)
+Built with ⚡ for the **H0: Hack the Zero Stack with Vercel v0 and AWS Databases** — [Hackathon](https://h01.devpost.com/?ref_content=featured&ref_feature=challenge&ref_medium=portfolio&_gl=1*1rkifi5*_gcl_au*MTM2NjE0NzQ2OS4xNzgwOTIxOTAx*_ga*MTU4NzI3MzA4OC4xNzgwOTIxOTAx*_ga_0YHJK3Y10M*czE3ODE3ODc3MzIkbzI5JGcxJHQxNzgxNzg3NzU4JGozNCRsMCRoMA..)
 
 *Powered by AWS DynamoDB + Vercel*
 
