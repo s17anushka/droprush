@@ -35,21 +35,22 @@ If 1000 users race to claim the last item — **exactly 1 wins**. No locks. No q
 
 ---
 
-## 🏗 Architecture
 
+# 🏗️ DropRush Architecture
 
+## Overview
+
+```text
 ╔════════════════════════════════════════════════════════════════════╗
 ║                            DROPRUSH                              ║
 ║                    Real-Time Flash Sale Platform                 ║
 ╚════════════════════════════════════════════════════════════════════╝
-
 
                          ┌─────────────────┐
                          │ 🛍️  SHOPPERS   │
                          │ Multi-tab Users │
                          └────────┬────────┘
                                   │
-                                  │ HTTP Requests
                                   ▼
                          ┌─────────────────┐
                          │ 👤 BRAND ADMIN  │
@@ -62,122 +63,162 @@ If 1000 users race to claim the last item — **exactly 1 wins**. No locks. No q
 ║                      VERCEL EDGE NETWORK                         ║
 ╠════════════════════════════════════════════════════════════════════╣
 ║                                                                    ║
-║  ┌────────────────────────────────────────────────────────────┐    ║
-║  │                 NEXT.JS 15 (APP ROUTER)                   │    ║
-║  ├────────────────────────────────────────────────────────────┤    ║
-║  │  /                  → Live Drop Feed                      │    ║
-║  │  /drops/[id]        → Product Details                     │    ║
-║  │  /admin             → Brand Dashboard                     │    ║
-║  └────────────────────────────────────────────────────────────┘    ║
+║  Next.js 15 (App Router)                                           ║
+║  ├─ /                → Live Drop Feed                              ║
+║  ├─ /drops/[id]      → Product Details                             ║
+║  └─ /admin           → Brand Dashboard                             ║
 ║                                                                    ║
-║  ┌────────────────────────────────────────────────────────────┐    ║
-║  │                    SERVER API LAYER                       │    ║
-║  ├────────────────────────────────────────────────────────────┤    ║
-║  │ GET   /api/drops              → List Active Drops         │    ║
-║  │ GET   /api/drops/[id]         → Fetch Drop Details        │    ║
-║  │ POST  /api/drops/[id]/claim   → Claim Product             │    ║
-║  │ POST  /api/admin/drops        → Create New Drop           │    ║
-║  └────────────────────────────────────────────────────────────┘    ║
+║  API Layer                                                        ║
+║  ├─ GET  /api/drops                                               ║
+║  ├─ GET  /api/drops/[id]                                          ║
+║  ├─ POST /api/drops/[id]/claim                                    ║
+║  └─ POST /api/admin/drops                                         ║
 ║                                                                    ║
 ╚═══════════════════════════════╦════════════════════════════════════╝
                                 ║
-                                ║ AWS SDK v3
                                 ▼
+                     AWS DynamoDB (Single Table)
+```
 
-╔════════════════════════════════════════════════════════════════════╗
-║                         AWS DYNAMODB                             ║
-║                     Single Table Architecture                    ║
-╠════════════════════════════════════════════════════════════════════╣
-║                                                                    ║
-║ TABLE: DropRush                                                    ║
-║                                                                    ║
-║ ┌──────────────────────────────────────────────────────────────┐   ║
-║ │ DROP METADATA                                                │   ║
-║ ├──────────────────────────────────────────────────────────────┤   ║
-║ │ PK = DROP#<id>                                               │   ║
-║ │ SK = META                                                    │   ║
-║ │                                                              │   ║
-║ │ name                                                         │   ║
-║ │ brand                                                        │   ║
-║ │ price                                                        │   ║
-║ │ totalStock                                                   │   ║
-║ │ remainingStock ◄─────────────────────────────┐               │   ║
-║ └──────────────────────────────────────────────┘               │   ║
-║                                                                │   ║
-║ ┌──────────────────────────────────────────────────────────────┐│   ║
-║ │ CLAIM RECORDS                                                ││   ║
-║ ├──────────────────────────────────────────────────────────────┤│   ║
-║ │ PK = DROP#<id>                                               ││   ║
-║ │ SK = CLAIM#<userId>                                          ││   ║
-║ │                                                              ││   ║
-║ │ claimedAt                                                    ││   ║
-║ │ status                                                       ││   ║
-║ └──────────────────────────────────────────────────────────────┘│   ║
-║                                                                │   ║
-║ ┌──────────────────────────────────────────────────────────────┐│   ║
-║ │ GSI1 : LIVE DROP FEED                                        ││   ║
-║ ├──────────────────────────────────────────────────────────────┤│   ║
-║ │ GSI1PK = STATUS#ACTIVE                                       ││   ║
-║ │ GSI1SK = startTime#dropId                                    ││   ║
-║ └──────────────────────────────────────────────────────────────┘│   ║
-║                                                                │   ║
-║ ⚡ ATOMIC INVENTORY CONTROL ───────────────────────────────────┘   ║
-║                                                                    ║
-║ UpdateItem(                                                        ║
-║   Key: { PK: DROP#id, SK: META }                                   ║
-║                                                                    ║
-║   SET remainingStock = remainingStock - 1                          ║
-║                                                                    ║
-║   ConditionExpression:                                             ║
-║       remainingStock > 0                                           ║
-║ )                                                                  ║
-║                                                                    ║
-║ ✅ Success  → Stock Reserved + Claim Created                       ║
-║ ❌ Failure  → Instant SOLD OUT Response                            ║
-║                                                                    ║
-╚════════════════════════════════════════════════════════════════════╝
+---
+
+## Tech Stack
+
+| Layer        | Technology          |
+| ------------ | ------------------- |
+| Frontend     | Next.js 15          |
+| Deployment   | Vercel Edge Network |
+| Backend      | Next.js API Routes  |
+| Database     | AWS DynamoDB        |
+| SDK          | AWS SDK v3          |
+| Architecture | Single Table Design |
+
+---
+
+## DynamoDB Data Model
+
+### Drop Metadata
+
+```json
+{
+  "PK": "DROP#123",
+  "SK": "META",
+  "name": "AirPods Pro",
+  "brand": "Apple",
+  "price": 99,
+  "totalStock": 100,
+  "remainingStock": 57
+}
+```
+
+### Claim Record
+
+```json
+{
+  "PK": "DROP#123",
+  "SK": "CLAIM#user123",
+  "claimedAt": "2026-06-19T10:00:00Z",
+  "status": "CLAIMED"
+}
+```
+
+### Global Secondary Index (GSI)
+
+```text
+GSI1PK = STATUS#ACTIVE
+GSI1SK = startTime#dropId
+```
+
+Used for fetching all active drops efficiently.
+
+---
+
+## Atomic Claim Mechanism
+
+```typescript
+UpdateItem({
+  Key: {
+    PK: "DROP#123",
+    SK: "META"
+  },
+
+  UpdateExpression:
+    "SET remainingStock = remainingStock - :one",
+
+  ConditionExpression:
+    "remainingStock > :zero"
+});
+```
+
+### Result
+
+* ✅ Stock available → Claim succeeds
+* ❌ Stock exhausted → Conditional check fails
+* ⚡ No race conditions
+* ⚡ No overselling
+
+---
+
+## Claim Flow
+
+```text
+User A ──┐
+User B ──┤
+User C ──┤──► DynamoDB Conditional Write
+User D ──┘
+
+                 stock = 1
+                      │
+          ┌───────────┴───────────┐
+          │                       │
+          ▼                       ▼
+
+      User A Wins          Users B,C,D Lose
+
+ remainingStock = 0      ConditionalCheckFailed
+
+ Claim Saved             SOLD OUT
+```
+
+---
+
+## Why It Works
+
+### Problem
+
+Multiple users may click **Claim** at exactly the same moment.
+
+Without protection:
+
+* Stock = 1
+* Four users claim simultaneously
+* Four orders get created
+* Overselling occurs
+
+### Solution
+
+DynamoDB Conditional Writes guarantee:
+
+```text
+remainingStock > 0
+```
+
+Only one request can decrement inventory successfully.
+
+All other requests automatically fail.
 
 
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚔️ CONCURRENT CLAIM FLOW (Race Condition Proof)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---
 
-                 User A
-                    │
-                 User B
-                    │
-                 User C
-                    │
-                 User D
-                    ▼
+## Scalability
 
-        DynamoDB Conditional Update
+* Vercel Edge handles global traffic spikes
+* DynamoDB scales automatically
+* Conditional writes maintain consistency under heavy load
+* No distributed locks required
 
-                    │
-                    ▼
-
-              remainingStock = 1
-
-                    │
-        ┌───────────┴───────────┐
-        │                       │
-        ▼                       ▼
-
-     User A Wins         Users B / C / D
-
- remainingStock → 0      ConditionalCheckFailed
-
- Claim Record Saved      SOLD OUT Returned
-
-        │
-        ▼
-
-    No Overselling.
-    No Double Claims.
-    Guaranteed Consistency.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**Result:** Thousands of users can compete for limited stock without inventory corruption.
 
 
 
