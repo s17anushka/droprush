@@ -80,7 +80,6 @@ If 1000 users race to claim the last item — **exactly 1 wins**. No locks. No q
                      AWS DynamoDB (Single Table)
 
 
----
 
 ## Claim Flow
 
